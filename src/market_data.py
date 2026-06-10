@@ -186,13 +186,56 @@ def fetch_morning_data() -> MorningMarketData:
     )
 
 
+def _build_symbol_data(name: str, official: dict, symbol: str,
+                        with_volume: bool = False) -> Optional[SymbolData]:
+    """用官方 API 數據建立 SymbolData，成交量仍從 yfinance 補充"""
+    try:
+        price = official["price"]
+        change = official["change"]
+        change_pct = official["change_pct"]
+        volume = None
+        if with_volume:
+            try:
+                hist = yf.Ticker(symbol).history(period="2d")
+                if not hist.empty:
+                    vol_raw = float(hist.iloc[-1].get("Volume", 0))
+                    volume = vol_raw if vol_raw > 0 else None
+            except Exception:
+                pass
+        return SymbolData(
+            name=name, symbol=symbol,
+            price=price, change=change, change_pct=change_pct,
+            data_date=datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y/%m/%d"),
+            volume=volume,
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error("建立 %s SymbolData 失敗: %s", name, e)
+        return None
+
+
 def fetch_closing_data() -> ClosingMarketData:
-    return ClosingMarketData(
-        indices=[
-            ("加權指數", _fetch("加權指數", "^TWII", with_volume=True)),
-            ("櫃買指數", _fetch("櫃買指數", "^TWOII", with_volume=False)),
-        ]
-    )
+    from src.twse_api import fetch_taiex, fetch_tpex_index
+    from datetime import timezone, timedelta
+
+    # 加權指數：官方 TWSE 優先，失敗才用 yfinance
+    twii_official = fetch_taiex()
+    if twii_official:
+        twii = _build_symbol_data("加權指數", twii_official, "^TWII", with_volume=True)
+        logger.info("加權指數採用 TWSE 官方資料")
+    else:
+        twii = _fetch("加權指數", "^TWII", with_volume=True)
+        logger.warning("加權指數回退使用 yfinance")
+
+    # 櫃買指數：官方 TPEX 優先，失敗才用 yfinance
+    tpex_official = fetch_tpex_index()
+    if tpex_official:
+        tpex = _build_symbol_data("櫃買指數", tpex_official, "^TWOII")
+        logger.info("櫃買指數採用 TPEX 官方資料")
+    else:
+        tpex = _fetch("櫃買指數", "^TWOII")
+        logger.warning("櫃買指數回退使用 yfinance")
+
+    return ClosingMarketData(indices=[("加權指數", twii), ("櫃買指數", tpex)])
 
 
 # Legacy support
