@@ -236,20 +236,24 @@ def build_closing_report(closing_data, sectors, headlines, analysis) -> str:
     return "\n".join(lines)
 
 
-def send_morning_report(morning_data, sectors, headlines, events, analysis) -> bool:
+def send_morning_report(morning_data, sectors, headlines, events, analysis, warnings=None) -> bool:
     if not Config.DISCORD_WEBHOOK_URL:
         logger.error("DISCORD_WEBHOOK_URL 未設定")
         return False
     text = build_morning_report(morning_data, sectors, headlines, events, analysis)
+    if warnings:
+        text += "\n\n━━━━ 🔍 資料驗證警告 ━━━━\n" + "\n".join(warnings)
     logger.info("發送早盤快訊（%d 字）", len(text))
     return _send_long(Config.DISCORD_WEBHOOK_URL, text)
 
 
-def send_closing_report(closing_data, sectors, headlines, analysis) -> bool:
+def send_closing_report(closing_data, sectors, headlines, analysis, warnings=None) -> bool:
     if not Config.DISCORD_WEBHOOK_URL:
         logger.error("DISCORD_WEBHOOK_URL 未設定")
         return False
     text = build_closing_report(closing_data, sectors, headlines, analysis)
+    if warnings:
+        text += "\n\n━━━━ 🔍 資料驗證警告 ━━━━\n" + "\n".join(warnings)
     logger.info("發送收盤整理（%d 字）", len(text))
     return _send_long(Config.DISCORD_WEBHOOK_URL, text)
 
