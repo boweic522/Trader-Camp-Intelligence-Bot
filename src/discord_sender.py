@@ -8,6 +8,10 @@ logger = logging.getLogger(__name__)
 TW_TZ = timezone(timedelta(hours=8))
 BOT_NAME = "Trader Camp Intelligence Bot"
 
+_RED = "[31m"
+_GREEN = "[32m"
+_RESET = "[0m"
+
 
 def _now_str() -> str:
     now = datetime.now(tz=TW_TZ)
@@ -15,18 +19,24 @@ def _now_str() -> str:
     return now.strftime(f"%Y/%m/%d ({weekday})")
 
 
+def _color(text: str, is_up: bool) -> str:
+    return f"{_GREEN if is_up else _RED}{text}{_RESET}"
+
+
 def _fmt_index(data) -> str:
     if data is None:
         return "暫無法確認"
     sign = "+" if data.change >= 0 else ""
-    return f"{data.price:,.2f}　{data.arrow} {sign}{data.change:.2f}（{sign}{data.change_pct:.2f}%）"
+    change_str = f"{data.arrow} {sign}{data.change:.2f}（{sign}{data.change_pct:.2f}%）"
+    return f"{data.price:,.2f}　{_color(change_str, data.is_up)}"
 
 
 def _fmt_crypto(data) -> str:
     if data is None:
         return "暫無法確認"
     sign = "+" if data.change >= 0 else ""
-    return f"{data.price:,.0f}　{data.arrow} {sign}{data.change:.0f}（{sign}{data.change_pct:.2f}%）"
+    change_str = f"{data.arrow} {sign}{data.change:.0f}（{sign}{data.change_pct:.2f}%）"
+    return f"{data.price:,.0f}　{_color(change_str, data.is_up)}"
 
 
 def _post(webhook_url: str, content: str) -> bool:
@@ -67,24 +77,36 @@ def _send_long(webhook_url: str, text: str) -> bool:
 
 def build_morning_report(morning_data, sectors, headlines, events, analysis) -> str:
     medals = ["🥇", "🥈", "🥉"]
+    sp500 = next((d for n, d in morning_data.indices if 'S&P' in n), None)
+    nasdaq = next((d for n, d in morning_data.indices if 'NASDAQ' in n), None)
+    sox = next((d for n, d in morning_data.indices if '費城' in n), None)
+    dxy = next((d for n, d in morning_data.indices if '美元' in n), None)
+    btc = next((d for n, d in morning_data.crypto if 'BTC' in n), None)
+    eth = next((d for n, d in morning_data.crypto if 'ETH' in n), None)
+
     lines = [
         f"🌅 **Trader Camp Intelligence** | 每日早盤快訊 V2.0",
         f"📅 {_now_str()}",
         "",
         "━━━━ 🌎 昨夜市場總覽 ━━━━",
-        f"🇺🇸 **S&P 500**：{_fmt_index(next((d for n,d in morning_data.indices if 'S&P' in n), None))}",
-        f"🇺🇸 **NASDAQ**：{_fmt_index(next((d for n,d in morning_data.indices if 'NASDAQ' in n), None))}",
-        f"💾 **費城半導體**：{_fmt_index(next((d for n,d in morning_data.indices if '費城' in n), None))}",
-        f"💵 **美元指數**：{_fmt_index(next((d for n,d in morning_data.indices if '美元' in n), None))}",
-        f"🪙 **BTC**：{_fmt_crypto(next((d for n,d in morning_data.crypto if 'BTC' in n), None))}",
-        f"🪙 **ETH**：{_fmt_crypto(next((d for n,d in morning_data.crypto if 'ETH' in n), None))}",
+        "```ansi",
+        f"S&P 500    ：{_fmt_index(sp500)}",
+        f"NASDAQ     ：{_fmt_index(nasdaq)}",
+        f"費城半導體 ：{_fmt_index(sox)}",
+        f"美元指數   ：{_fmt_index(dxy)}",
+        f"BTC        ：{_fmt_crypto(btc)}",
+        f"ETH        ：{_fmt_crypto(eth)}",
+        "```",
         "",
         "━━━━ 🔥 昨日強勢族群 ━━━━",
     ]
     strong = [s for s in sectors if s.is_up][:3]
     if strong:
+        lines.append("```ansi")
         for i, s in enumerate(strong):
-            lines.append(f"{medals[i]} {s.emoji} **{s.name}**　▲{s.avg_change_pct:.2f}%　代表：{s.best_stock}")
+            pct_str = _color(f"▲{s.avg_change_pct:.2f}%", True)
+            lines.append(f"{medals[i]} {s.emoji} {s.name}　{pct_str}　代表：{s.best_stock}")
+        lines.append("```")
     else:
         lines.append("暫無法確認")
 
@@ -140,45 +162,38 @@ def build_closing_report(closing_data, sectors, headlines, analysis) -> str:
     twii = next((d for n, d in closing_data.indices if "加權" in n and d), None)
     tpex = next((d for n, d in closing_data.indices if "櫃買" in n and d), None)
 
-    twii_str = "暫無法確認"
-    vol_str = ""
-    if twii:
-        twii_str = f"{twii.price:,.2f} 點　{twii.arrow} {twii.change:+.2f}（{twii.change_pct:+.2f}%）"
-        if twii.volume:
-            vol_str = f"　成交量 {twii.volume/1e8:.0f}億"
-
-    tpex_str = "暫無法確認"
-    if tpex:
-        tpex_str = f"{tpex.price:,.2f} 點　{tpex.arrow} {tpex.change:+.2f}（{tpex.change_pct:+.2f}%）"
-
     lines = [
         f"🌙 **Trader Camp Intelligence** | 每日收盤整理 V2.0",
         f"📅 {_now_str()}",
         "",
         "━━━━ 📊 台股收盤概況 ━━━━",
-        f"📈 **加權指數**：{twii_str}{vol_str}",
-        f"📈 **櫃買指數**：{tpex_str}",
+        "```ansi",
+        f"加權指數：{_fmt_index(twii)}{('　成交量 ' + twii.volume.__format__('.0f') + '張') if twii and twii.volume else ''}",
+        f"櫃買指數：{_fmt_index(tpex)}",
+        "```",
         "",
         "━━━━ 🔥 今日強勢族群 ━━━━",
     ]
     strong = [s for s in sectors if s.is_up][:3]
     if strong:
+        lines.append("```ansi")
         for i, s in enumerate(strong):
-            lines.append(
-                f"{medals[i]} {s.emoji} **{s.name}**　▲{s.avg_change_pct:.2f}%　"
-                f"代表：{s.best_stock}（▲{s.best_stock_pct:.2f}%）"
-            )
+            pct = _color(f"▲{s.avg_change_pct:.2f}%", True)
+            best = _color(f"▲{s.best_stock_pct:.2f}%", True)
+            lines.append(f"{medals[i]} {s.emoji} {s.name}　{pct}　代表：{s.best_stock}（{best}）")
+        lines.append("```")
     else:
         lines.append("今日無明顯強勢族群")
 
     lines += ["", "━━━━ ❄️ 今日弱勢族群 ━━━━"]
     weak = sorted([s for s in sectors if not s.is_up], key=lambda x: x.avg_change_pct)[:3]
     if weak:
+        lines.append("```ansi")
         for i, s in enumerate(weak):
-            lines.append(
-                f"{medals[i]} {s.emoji} **{s.name}**　▼{abs(s.avg_change_pct):.2f}%　"
-                f"代表：{s.best_stock}（{s.best_stock_pct:.2f}%）"
-            )
+            pct = _color(f"▼{abs(s.avg_change_pct):.2f}%", False)
+            best = _color(f"{s.best_stock_pct:.2f}%", False)
+            lines.append(f"{medals[i]} {s.emoji} {s.name}　{pct}　代表：{s.best_stock}（{best}）")
+        lines.append("```")
     else:
         lines.append("今日無明顯弱勢族群")
 
