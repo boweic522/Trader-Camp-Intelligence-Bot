@@ -31,11 +31,17 @@ def run_morning_report() -> None:
         logger.info("執行 AI 盤前分析...")
         analysis = analyze_morning(morning_data, sectors, headlines)
 
-        logger.info("交叉驗證資料來源...")
-        from src.validator import validate_morning
+        logger.info("驗證資料正確性...")
+        from src.validator import validate_morning, validate_content
+        from src.discord_sender import build_morning_report
         warnings = validate_morning(morning_data)
+        report_text = build_morning_report(morning_data, sectors, headlines, events, analysis)
+        content_warns = validate_content(report_text, morning_data=morning_data)
+        warnings += content_warns
         if warnings:
-            logger.warning("早盤資料差異：%s", warnings)
+            logger.warning("驗證發現問題（共 %d 項）：%s", len(warnings), warnings)
+        else:
+            logger.info("所有驗證通過，準備發送")
 
         logger.info("發送 Discord 早盤快訊...")
         ok = send_morning_report(morning_data, sectors, headlines, events, analysis, warnings=warnings)
@@ -71,11 +77,17 @@ def run_closing_report() -> None:
         logger.info("執行 AI 收盤解析...")
         analysis = analyze_closing(closing_data, sectors, headlines)
 
-        logger.info("交叉驗證資料來源...")
-        from src.validator import validate_closing
+        logger.info("驗證資料正確性...")
+        from src.validator import validate_closing, validate_content
+        from src.discord_sender import build_closing_report
         warnings = validate_closing(closing_data)
+        report_text = build_closing_report(closing_data, sectors, headlines, analysis)
+        content_warns = validate_content(report_text, closing_data=closing_data)
+        warnings += content_warns
         if warnings:
-            logger.warning("收盤資料差異：%s", warnings)
+            logger.warning("驗證發現問題（共 %d 項）：%s", len(warnings), warnings)
+        else:
+            logger.info("所有驗證通過，準備發送")
 
         logger.info("發送 Discord 收盤整理...")
         ok = send_closing_report(closing_data, sectors, headlines, analysis, warnings=warnings)

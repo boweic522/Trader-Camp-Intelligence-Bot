@@ -81,19 +81,54 @@ class ClosingMarketData:
 
 def _fetch(name: str, symbol: str, with_volume: bool = False) -> Optional[SymbolData]:
     try:
-        hist = yf.Ticker(symbol).history(period="5d")
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="5d")
         if hist.empty:
             logger.warning("無資料 %s (%s)", name, symbol)
             return None
 
         latest = hist.iloc[-1]
-        prev = hist.iloc[-2] if len(hist) >= 2 else hist.iloc[-1]
         price = float(latest["Close"])
-        prev_close = float(prev["Close"])
+
+        # 優先使用 yfinance info 的官方前收盤價，避免跨假日計算錯誤
+        prev_close = None
+        try:
+            info = ticker.info
+            prev_close = (
+                info.get("previousClose")
+                or info.get("regularMarketPreviousClose")
+            )
+            if prev_close:
+                prev_close = float(prev_close)
+        except Exception:
+            pass
+
+        if not prev_close and len(hist) >= 2:
+            prev_close = float(hist.iloc[-2]["Close"])
+
+        if not prev_close:
+            logger.warning("無法取得 %s 前收盤價", name)
+            return None
+
         change = price - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0.0
+
+        # 合理性防護：指數單日超過 ±15% 代表 previousClose 錯誤，改用歷史比較
+        if abs(change_pct) > 15 and len(hist) >= 2:
+            hist_prev = float(hist.iloc[-2]["Close"])
+            hist_change = price - hist_prev
+            hist_pct = hist_change / hist_prev * 100 if hist_prev else 0.0
+            logger.warning(
+                "%s previousClose 異常（%.2f%%），改用歷史前收 %.2f → %.2f%%",
+                name, change_pct, hist_prev, hist_pct
+            )
+            prev_close, change, change_pct = hist_prev, hist_change, hist_pct
+
         vol_raw = float(latest.get("Volume", 0)) if with_volume else None
         volume = vol_raw if (vol_raw is not None and vol_raw > 0) else None
+
+        logger.debug("%s price=%.2f prev=%.2f chg=%.2f pct=%.2f%%",
+                     name, price, prev_close, change, change_pct)
 
         return SymbolData(
             name=name, symbol=symbol, price=price,
