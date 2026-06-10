@@ -10,6 +10,7 @@ BOT_NAME = "Trader Camp Intelligence Bot"
 
 _RED = "[31m"
 _GREEN = "[32m"
+_YELLOW = "[33m"
 _RESET = "[0m"
 
 
@@ -26,6 +27,12 @@ def _color(text: str, is_up: bool) -> str:
 def _fmt_index(data) -> str:
     if data is None:
         return "暫無法確認"
+    try:
+        import math
+        if math.isnan(data.price) or math.isnan(data.change):
+            return "暫無法確認"
+    except (TypeError, ValueError):
+        pass
     sign = "+" if data.change >= 0 else ""
     change_str = f"{data.arrow} {sign}{data.change:.2f}（{sign}{data.change_pct:.2f}%）"
     return f"{data.price:,.2f}　{_color(change_str, data.is_up)}"
@@ -38,6 +45,44 @@ def _fmt_crypto(data) -> str:
     change_str = f"{data.arrow} {sign}{data.change:.0f}（{sign}{data.change_pct:.2f}%）"
     return f"{data.price:,.0f}　{_color(change_str, data.is_up)}"
 
+
+
+
+def _vix_label(vix_val: float) -> tuple:
+    """(color, label) based on VIX level"""
+    if vix_val < 15:
+        return _GREEN, "安全"
+    elif vix_val < 30:
+        return _YELLOW, "普通"
+    else:
+        return _RED, "危險"
+
+
+def _fmt_vix(data) -> str:
+    if data is None:
+        return "暫無法確認"
+    clr, label = _vix_label(data.price)
+    sign = "+" if data.change >= 0 else ""
+    change_str = f"{data.arrow} {sign}{data.change:.2f}（{sign}{data.change_pct:.2f}%）"
+    return f"{data.price:.2f}　{clr}{change_str}　【{label}】{_RESET}"
+
+
+def _fmt_sector_index(si) -> str:
+    sign = "+" if si.change_pct >= 0 else ""
+    pct_str = f"{si.arrow}{sign}{si.change_pct:.2f}%"
+    return f"{_color(pct_str, si.is_up)}"
+
+
+def _fmt_futures(data: dict) -> str:
+    if data is None:
+        return "資料暫無法取得"
+    sign = "+" if data.get("change", 0) >= 0 else ""
+    arrow = "▲" if data.get("change", 0) >= 0 else "▼"
+    price = data.get("price", 0)
+    change = data.get("change", 0)
+    change_pct = data.get("change_pct", 0)
+    change_str = f"{arrow} {sign}{change:.0f}（{sign}{change_pct:.2f}%）"
+    return f"{price:,.0f}　{_color(change_str, change >= 0)}"
 
 def _post(webhook_url: str, content: str) -> bool:
     payload = {"content": content, "username": BOT_NAME}
@@ -84,6 +129,10 @@ def build_morning_report(morning_data, sectors, headlines, events, analysis) -> 
     btc = next((d for n, d in morning_data.crypto if 'BTC' in n), None)
     eth = next((d for n, d in morning_data.crypto if 'ETH' in n), None)
 
+    vix = next((d for n, d in morning_data.indices if 'VIX' in n), None)
+    txf_night = morning_data.txf_night
+    sector_indices = getattr(morning_data, 'sector_indices', [])
+
     lines = [
         f"🌅 **Trader Camp Intelligence** | 每日早盤快訊 V2.0",
         f"📅 {_now_str()}",
@@ -94,12 +143,26 @@ def build_morning_report(morning_data, sectors, headlines, events, analysis) -> 
         f"NASDAQ     ：{_fmt_index(nasdaq)}",
         f"費城半導體 ：{_fmt_index(sox)}",
         f"美元指數   ：{_fmt_index(dxy)}",
+        f"VIX恐慌指數：{_fmt_vix(vix)}",
         f"BTC        ：{_fmt_crypto(btc)}",
         f"ETH        ：{_fmt_crypto(eth)}",
         "```",
         "",
-        "━━━━ 🔥 昨日強勢族群 ━━━━",
+        "━━━━ 📈 台指期盤後 ━━━━",
+        "```ansi",
+        f"台指期夜盤 ：{_fmt_futures(txf_night)}",
+        "```",
     ]
+
+    # 昨日台股類股指數
+    if sector_indices:
+        lines += ["", "━━━━ 🏭 昨日類股表現 ━━━━", "```ansi"]
+        for si in sector_indices:
+            name_padded = si.name.ljust(6, "　")
+            lines.append(f"{name_padded} {_fmt_sector_index(si)}")
+        lines.append("```")
+
+    lines += ["", "━━━━ 🔥 昨日強勢族群 ━━━━"]
     strong = [s for s in sectors if s.is_up][:3]
     if strong:
         lines.append("```ansi")
@@ -162,6 +225,10 @@ def build_closing_report(closing_data, sectors, headlines, analysis) -> str:
     twii = next((d for n, d in closing_data.indices if "加權" in n and d), None)
     tpex = next((d for n, d in closing_data.indices if "櫃買" in n and d), None)
 
+    txf_daily = closing_data.txf_daily
+    vix_cl = getattr(closing_data, 'vix', None)
+    sector_indices = getattr(closing_data, 'sector_indices', [])
+
     lines = [
         f"🌙 **Trader Camp Intelligence** | 每日收盤整理 V2.0",
         f"📅 {_now_str()}",
@@ -170,10 +237,20 @@ def build_closing_report(closing_data, sectors, headlines, analysis) -> str:
         "```ansi",
         f"加權指數：{_fmt_index(twii)}{('　成交量 ' + twii.volume.__format__('.0f') + '張') if twii and twii.volume else ''}",
         f"櫃買指數：{_fmt_index(tpex)}",
+        f"台指期　：{_fmt_futures(txf_daily)}",
+        f"VIX恐慌 ：{_fmt_vix(vix_cl)}",
         "```",
-        "",
-        "━━━━ 🔥 今日強勢族群 ━━━━",
     ]
+
+    # 今日類股指數
+    if sector_indices:
+        lines += ["", "━━━━ 🏭 今日類股表現 ━━━━", "```ansi"]
+        for si in sector_indices:
+            name_padded = si.name.ljust(6, "　")
+            lines.append(f"{name_padded} {_fmt_sector_index(si)}")
+        lines.append("```")
+
+    lines += ["", "━━━━ 🔥 今日強勢族群 ━━━━"]
     strong = [s for s in sectors if s.is_up][:3]
     if strong:
         lines.append("```ansi")

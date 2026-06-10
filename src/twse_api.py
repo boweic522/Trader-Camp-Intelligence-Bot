@@ -12,6 +12,19 @@ TW_TZ = timezone(timedelta(hours=8))
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 TIMEOUT = 10
 
+SECTOR_TARGETS = {
+    "半導體類指數": "半導體",
+    "電子工業類指數": "電子工業",
+    "電子零組件類指數": "電子零組件",
+    "金融保險類指數": "金融保險",
+    "航運類指數": "航運",
+    "數位雲端類指數": "數位雲端",
+    "建材營造類指數": "建材營造",
+    "生技醫療類指數": "生技醫療",
+    "光電類指數": "光電",
+    "通信網路類指數": "通信網路",
+}
+
 
 def _today_tw() -> str:
     return datetime.now(tz=TW_TZ).strftime("%Y%m%d")
@@ -131,3 +144,42 @@ def fetch_tpex_index() -> Optional[dict]:
 
     logger.warning("TPEX 官方 API 無法取得櫃買指數（date=%s）", roc)
     return None
+
+
+# ── 產業類股指數 (TWSE) ───────────────────────────────────────
+
+def fetch_sector_indices() -> list:
+    """回傳主要產業類股指數 list，格式: {name, short_name, price, change, change_pct}"""
+    body = _get(
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
+        "?type=ALL&response=json"
+    )
+    if not body:
+        logger.warning("TWSE MI_INDEX 無法取得類股指數")
+        return []
+
+    results = []
+    for table in body.get("tables", []):
+        for row in table.get("data", []):
+            if len(row) < 5:
+                continue
+            full_name = str(row[0])
+            if full_name not in SECTOR_TARGETS:
+                continue
+            try:
+                price = float(str(row[1]).replace(",", ""))
+                change_pct = float(str(row[4]).replace("%", "").replace("+", ""))
+                change_pts_abs = float(str(row[3]).replace(",", ""))
+                change = change_pts_abs if change_pct >= 0 else -change_pts_abs
+                results.append({
+                    "name": SECTOR_TARGETS[full_name],
+                    "price": price,
+                    "change": change,
+                    "change_pct": change_pct,
+                })
+            except (ValueError, IndexError) as e:
+                logger.debug("解析類股 %s 失敗: %s", full_name, e)
+
+    results.sort(key=lambda x: x["change_pct"], reverse=True)
+    logger.info("TWSE 類股指數取得 %d 項", len(results))
+    return results

@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import yfinance as yf
 
@@ -10,6 +10,7 @@ MORNING_INDICES = [
     ("NASDAQ", "^IXIC"),
     ("費城半導體", "^SOX"),
     ("美元指數", "DX-Y.NYB"),
+    ("VIX恐慌指數", "^VIX"),
 ]
 MORNING_CRYPTO = [
     ("BTC", "BTC-USD"),
@@ -69,14 +70,35 @@ class SectorData:
 
 
 @dataclass
+class SectorIndex:
+    name: str
+    price: float
+    change: float
+    change_pct: float
+
+    @property
+    def is_up(self) -> bool:
+        return self.change_pct >= 0
+
+    @property
+    def arrow(self) -> str:
+        return "▲" if self.is_up else "▼"
+
+
+@dataclass
 class MorningMarketData:
     indices: list
     crypto: list
+    sector_indices: list = field(default_factory=list)
+    txf_night: Optional[dict] = None
 
 
 @dataclass
 class ClosingMarketData:
     indices: list
+    sector_indices: list = field(default_factory=list)
+    txf_daily: Optional[dict] = None
+    vix: Optional["SymbolData"] = None
 
 
 def _fetch(name: str, symbol: str, with_volume: bool = False) -> Optional[SymbolData]:
@@ -180,9 +202,19 @@ def fetch_sector_performance() -> list:
 
 
 def fetch_morning_data() -> MorningMarketData:
+    from src.twse_api import fetch_sector_indices
+    from src.taifex_api import fetch_txf_night
+    raw_sectors = fetch_sector_indices()
+    sector_indices = [
+        SectorIndex(name=s["name"], price=s["price"],
+                    change=s["change"], change_pct=s["change_pct"])
+        for s in raw_sectors
+    ]
     return MorningMarketData(
         indices=[(n, _fetch(n, s)) for n, s in MORNING_INDICES],
         crypto=[(n, _fetch(n, s)) for n, s in MORNING_CRYPTO],
+        sector_indices=sector_indices,
+        txf_night=fetch_txf_night(),
     )
 
 
@@ -214,7 +246,8 @@ def _build_symbol_data(name: str, official: dict, symbol: str,
 
 
 def fetch_closing_data() -> ClosingMarketData:
-    from src.twse_api import fetch_taiex, fetch_tpex_index
+    from src.twse_api import fetch_taiex, fetch_tpex_index, fetch_sector_indices
+    from src.taifex_api import fetch_txf_daily
     from datetime import timezone, timedelta
 
     # 加權指數：官方 TWSE 優先，失敗才用 yfinance
@@ -235,7 +268,22 @@ def fetch_closing_data() -> ClosingMarketData:
         tpex = _fetch("櫃買指數", "^TWOII")
         logger.warning("櫃買指數回退使用 yfinance")
 
-    return ClosingMarketData(indices=[("加權指數", twii), ("櫃買指數", tpex)])
+    # 產業類股指數
+    raw_sectors = fetch_sector_indices()
+    sector_indices = [
+        SectorIndex(name=s["name"], price=s["price"],
+                    change=s["change"], change_pct=s["change_pct"])
+        for s in raw_sectors
+    ]
+
+    vix = _fetch("VIX恐慌指數", "^VIX")
+
+    return ClosingMarketData(
+        indices=[("加權指數", twii), ("櫃買指數", tpex)],
+        sector_indices=sector_indices,
+        txf_daily=fetch_txf_daily(),
+        vix=vix,
+    )
 
 
 # Legacy support
